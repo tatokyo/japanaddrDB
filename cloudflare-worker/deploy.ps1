@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 $ACCOUNT_ID = "YOUR_ACCOUNT_ID"
 $ZONE_ID = "YOUR_ZONE_ID"
 $API_TOKEN = "YOUR_API_TOKEN"
-$SCRIPT_NAME = "japanaddrdb-proxy"
+$SCRIPT_NAME = "japanaddrdb"
 $PATTERN = "api.yourdomain.com/*" # e.g. https://api.yourdomain.com/*
 $ORIGIN = "http://46.250.255.208:3000"
 
