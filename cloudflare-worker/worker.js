@@ -10,9 +10,19 @@ async function handleRequest(request) {
     });
   }
 
-  const origin = "http://46.250.255.208:3000";
   const url = new URL(request.url);
-  const upstream = new URL(url.pathname + url.search, origin);
+  if (url.pathname === "/health/live") {
+    return new Response(JSON.stringify({ status: "ok", service: "japanaddrdb", scope: "worker" }), {
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders() },
+    });
+  }
+
+  // Cloudflare rejects HTTP fetches to a bare IP (1003). This DNS-only
+  // hostname points at the ABR server and must not route back to this Worker.
+  const upstream = new URL("http://japanaddrdb-origin.temazero.ai:3000");
+  // Assign paths separately so an input beginning with // cannot change hosts.
+  upstream.pathname = url.pathname;
+  upstream.search = url.search;
 
   const headers = new Headers(request.headers);
   headers.delete("Host");
@@ -23,11 +33,16 @@ async function handleRequest(request) {
     method: request.method,
     headers,
     body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-    redirect: "follow",
+    redirect: "manual",
+    signal: AbortSignal.timeout(15000),
   };
 
   try {
     const upstreamResponse = await fetch(upstream, init);
+    if (upstreamResponse.status >= 500) {
+      if (upstreamResponse.body) await upstreamResponse.body.cancel();
+      return upstreamError("upstream_unavailable", 502, upstreamResponse.status);
+    }
     const responseHeaders = new Headers(upstreamResponse.headers);
     responseHeaders.set("x-proxied-by", "cf-worker");
     const cors = corsHeaders();
@@ -41,18 +56,20 @@ async function handleRequest(request) {
       headers: responseHeaders,
     });
   } catch (error) {
-    const message = error && error.message ? error.message : "upstream error";
-    return new Response(
-      JSON.stringify({ error: "upstream_unreachable", detail: message }),
-      {
-        status: 502,
-        headers: Object.assign(
-          { "content-type": "application/json; charset=utf-8" },
-          corsHeaders(),
-        ),
-      },
-    );
+    const timedOut = init.signal.aborted;
+    return upstreamError(timedOut ? "upstream_timeout" : "upstream_unreachable", timedOut ? 504 : 502);
   }
+}
+
+function upstreamError(error, status, upstreamStatus) {
+  return new Response(JSON.stringify({
+    status: "unavailable",
+    error,
+    ...(upstreamStatus === undefined ? {} : { upstream_status: upstreamStatus }),
+  }), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...corsHeaders() },
+  });
 }
 
 function corsHeaders() {
